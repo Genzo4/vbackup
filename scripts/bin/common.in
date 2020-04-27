@@ -109,7 +109,7 @@ h_formdate()
 		1) date "+%y%m%d" ;;
 		2) date "+%y%m%d%H" ;;
 		3) date "+%y%m%d%H%M" ;;
-		*) echo "Bad date formet" >&2 exit 3 ;;
+		*) echo "Bad date format" >&2 exit 3 ;;
 	esac
 }
 
