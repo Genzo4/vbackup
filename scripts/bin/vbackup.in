@@ -231,8 +231,12 @@ read_global_conf()
 	. $G
 
 	# Export global variables
+	
 	h_msg 12 "Global var COMPRESS: $COMPRESS"
 	export COMPRESS
+	
+	h_msg 12 "Global var BACKUP_TYPE: $BACKUP_TYPE"
+	export BACKUP_TYPE	
 }
 
 # Get the script to be executed in the proper order

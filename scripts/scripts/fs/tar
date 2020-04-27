@@ -123,8 +123,13 @@ get_old_date()
 	if [ -z "$2" ] || [ -z "$3" ] ; then
 		return 1
 	fi
-	
-	let lev=$lev-1
+
+	if [ "$BACKUP_TYPE" == "inc" ] || [ "$BACKUP_TYPE" == "INC" ] ; then
+		let lev=$lev
+	else
+		let lev=$lev-1
+	fi
+
 	while [ "$lev" -ge 0 ] ; do
 		statefile=$(get_statefile "$1" "$lev" "$3")
 		if [ -f "${statefile}" ] ; then
@@ -226,10 +231,9 @@ do_run()
 			fi
 		fi
 
-		extra=""
 		if h_is_true "$COMPRESS" ; then
-			FN2="$DESTDIR/$LEVEL.$FN.$T_DATE2.tar.gz"
-			extra="-z"
+			FN2="$DESTDIR/$LEVEL.$FN.$T_DATE2.tar.xz"
+			extra="--xz"
 			h_msg 13 "Will compress"
 		else
 			FN2="$DESTDIR/$LEVEL.$FN.$T_DATE2.tar"
@@ -246,9 +250,13 @@ do_run()
 			else
 				h_msg 7 "Last level $LEVEL backup of $dir: NEVER"
 			fi
-
-			if get_old_date "$STRATEGY" $LEVEL "$FN" ; then
-				h_msg 7 "Backup will be based on L$R_LLEVEL backup at $R_LDATE"
+			
+			if [ "$LEVEL" == "0" ] ; then
+				h_msg 7 "Force FULL backup (LEVEL=0)"
+			else
+				if get_old_date "$STRATEGY" $LEVEL "$FN" ; then
+					h_msg 7 "Backup will be based on L$R_LLEVEL backup at $R_LDATE"
+				fi
 			fi
 
 			R_TARSTATE="$STATEFILE.snar"
@@ -262,10 +270,11 @@ do_run()
 			fi
 		
 			set -f
-			$GTAR -c --one-file-system -C "$dir" \
+			XZ_OPT=-e9 $GTAR -c --one-file-system -C "$dir" \
 				$T_EXCL_F $T_EXCL \
 				--listed-incremental="$R_TARSTATE.new" \
 			 	--sparse $extra \
+			--level=$LEVEL \
 				-V "L${LEVEL} backup of ${dir} at ${T_DATE}" \
 				-f "$FN2" .
 			set +f

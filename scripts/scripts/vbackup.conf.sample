@@ -15,3 +15,6 @@ DESTDIR0=""
 # Compress backups? (yes/no)
 COMPRESS="yes"
 
+# Backup type = INC (Incremental) or DIF (Differencial). Default: DIF
+# If backup level = 0 forcing FULL backup
+BACKUP_TYPE=inc
