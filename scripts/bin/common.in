@@ -109,6 +109,7 @@ h_formdate()
 		1) date "+%y%m%d" ;;
 		2) date "+%y%m%d%H" ;;
 		3) date "+%y%m%d_%H-%M" ;;
+		4) date "+%y%m%d_%H-%M-%S" ;;
 		*) echo "Bad date format" >&2 exit 3 ;;
 	esac
 }
@@ -264,7 +265,8 @@ h_msg()
 {
 	local	L
 	local	N
-
+	local	D
+	
 	if [ "$1" = "-n" ] ; then
 		N="-n"
 		shift
@@ -275,10 +277,12 @@ h_msg()
 
 	[ "$L" -gt "$MESSAGE_LEVEL" ]  && return
 
+	D=`h_formdate 4`
+	h_ensuredir /var/log/vbackup
 	if [ "$L" -lt 10 ] ; then
-		$ECHO_E $N "$*"
+		$ECHO_E $D $N "$*" >> /var/log/vbackup/$STRATEGY.log
 	else
-		$ECHO_E $N "L$L: $*"
+		$ECHO_E $D $N "L$L: $*" >> /var/log/vbackup/$STRATEGY.log
 	fi
 
 	return 0
