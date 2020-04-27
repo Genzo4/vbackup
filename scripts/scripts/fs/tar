@@ -190,7 +190,7 @@ do_run()
 	fi
 
 	T_DATE=`date`
-	T_DATE2=`h_formdate 1`
+	T_DATE2=`h_formdate 3`
 
 	if ! [ -z "$EXCLUDEFILE" ] ; then
 		if ! [ -e "$EXCLUDEFILE" ] ; then
@@ -232,11 +232,11 @@ do_run()
 		fi
 
 		if h_is_true "$COMPRESS" ; then
-			FN2="$DESTDIR/$LEVEL.$FN.$T_DATE2.tar.xz"
+			FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar.xz"
 			extra="--xz"
 			h_msg 13 "Will compress"
 		else
-			FN2="$DESTDIR/$LEVEL.$FN.$T_DATE2.tar"
+			FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar"
 			extra=""
 			h_msg 13 "Will NOT compress $COMPRESS"
 		fi
