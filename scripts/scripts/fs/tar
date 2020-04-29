@@ -269,14 +269,16 @@ do_run()
 				touch "$R_TARSTATE.new"
 			fi
 		
+			h_ensuredir /var/log/vbackup
+			
 			set -f
 			XZ_OPT=-e9 $GTAR -c --one-file-system -C "$dir" \
 				$T_EXCL_F $T_EXCL \
 				--listed-incremental="$R_TARSTATE.new" \
 			 	--sparse $extra \
-			--level=$LEVEL \
+				--level=$LEVEL \
 				-V "L${LEVEL} backup of ${dir} at ${T_DATE}" \
-				-f "$FN2" .
+				-f "$FN2" . 2>>/var/log/vbackup/$STRATEGY.log
 			set +f
 		
 			# Exit code 1 is a warning. Don't let it fail
