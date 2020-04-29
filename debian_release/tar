@@ -1,0 +1,303 @@
+#!/bin/bash
+#
+# This file is part of vbackup.
+#
+# vbackup is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# vbackup is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with vbackup  If not, see <http://www.gnu.org/licenses/>.
+#
+# $Id$
+#
+# Description
+#
+#	Perform filesystem backup using tar
+#	It does incremental backups using --listed-incremental
+#	It should be restored like this:
+#	tar --incremental -xf /backup/0.mplampla.tar
+#	tar --incremental -xf /backup/5.mplampla.tar
+#	tar --incremental -xf /backup/7.mplampla.tar
+#
+
+NAME="tar"
+VERSION="$PACKAGE_VERSION"
+DESC="Filesystem backup using tar"
+LICENSE="$PACKAGE_LICENSE"
+COPYRIGHT="$PACKAGE_COPYRIGHT"
+CONTACT="$PACKAGE_BUGREPORT"
+
+# Display help
+do_help()
+{
+	cat << _END
+Perform incremental (listed-incremental) tar backups
+
+Configuration options:
+	DIRS		The directories to backup (*)
+	DIRFILE		A file containing the directories to backup (*)
+	DESTDIR		The directory to backup to (required)
+	EXCLUDE		Exclude patters
+	EXCLUDEFILE	A file containing exclude patterns
+	ROOTFN		The name to give to the root fs tar file (if any)
+
+  * Exactly one of DIRS/DIRFILE is required
+_END
+	if [ -z "$GTAR" ] ; then
+		cat << _END
+
+ !! This method is DISABLED because GNU tar was not found
+_END
+	fi
+}
+
+# Check configuration
+# return: 0: ok, 1: error
+do_check_conf()
+{
+	local tmp
+
+	[ -z "$GTAR" ] && h_error "GNU tar was not found" && return 1
+
+	[ -z "$LEVEL" ] && h_error "Missing LEVEL" && return 1
+	[ -z "$DIRS" ] && [ -z "$DIRFILE" ] && h_error "Missing DIRS/DIRFILE" \
+		&& return 1
+	if ! [ -z "$DIRS" ] && ! [ -z "$DIRFILE" ] ; then
+		h_error "Only one of DIRS/DIRFILE may be defined" 
+		return 1
+	fi
+
+	[ -z "$STATEDIR" ] && h_error "Missing STATEDIR" && return 1
+	[ -z "$DESTDIR" ] && h_error "Missing DESTDIR" && return 1
+
+	tmp=`expr $LEVEL + 1 >/dev/null 2>&1 || echo koko`
+
+	[ "$tmp" = "koko" ] && h_error "LEVEL must be a number" && return 1
+
+	if [ "$LEVEL" -lt 0 ] || [ "$LEVEL" -gt 9 ] ; then
+		h_error "LEVEL must be in the range 0-9"
+		return 1
+	fi
+
+	return 0
+}
+
+# Print the full path of the state file
+# $1 == strategy
+# $2 == level
+# $3 == filename (dir with dots instead of /)
+get_statefile()
+{
+	if test -z "$1" ; then
+		statefile="$2.$3"
+	else
+		statefile="$1.$2.$3"
+	fi
+
+	echo "$STATEDIR/$statefile"
+}
+
+# Try to find the last backup date with lower level
+# $1 == strategy
+# $2 == level
+# $3 == filename (dir with dots instead of / (/tmp/a/b -> tmp.a.b)
+# Return value in $R_LDATE
+# Return tar-state file in $R_TARSTATE0
+# Return last backup level in $R_LLEVEL
+# Return 0 if R_LDATE was found or 1 if not (true/false)
+get_old_date()
+{
+	local old=""
+	local lev="$2"
+	local statefile=""
+	
+	R_LDATE=""
+	
+	if [ -z "$2" ] || [ -z "$3" ] ; then
+		return 1
+	fi
+
+	if [ "$BACKUP_TYPE" == "inc" ] || [ "$BACKUP_TYPE" == "INC" ] ; then
+		let lev=$lev
+	else
+		let lev=$lev-1
+	fi
+
+	while [ "$lev" -ge 0 ] ; do
+		statefile=$(get_statefile "$1" "$lev" "$3")
+		if [ -f "${statefile}" ] ; then
+			R_LDATE=`cat "$statefile"`
+			R_TARSTATE0="$statefile.snar"
+			R_LLEVEL=$lev
+			return 0
+		fi
+		let lev=$lev-1
+	done
+
+	R_TARSTATE0="$(get_statefile "$1" 0 "$3").snar"
+	R_LLEVEL=-1
+	
+	return 1
+}
+
+# Remove unwanted state files
+# In case of a L3 backup remove all state files
+# for levels > 3
+# $1 == strategy
+# $2 == level
+# $3 == filename
+remove_unwanted()
+{
+	local lev="$2"
+
+	if [ -z "$2" ] || [ -z "$3" ] ; then
+		return 1
+	fi
+	
+	let lev=$lev+1
+	while [ "$lev" -le 9 ] ; do
+		statefile=$(get_statefile "$1" "$lev" "$3")
+		if [ -f "${statefile}" ] ; then
+			h_msg 11 "Removing $statefile"
+			rm -f "${statefile}"
+
+			h_msg 11 "Removing $statefile.snar"
+			rm -f "${statefile}.snar"
+		fi
+		let lev=$lev+1
+	done
+}
+
+# Do backup
+# TODO:
+#	Don't use -X and --exclude on systems that don't support it
+do_run()
+{
+	if [ "x$ABORT" = "x1" ] ; then
+		return 0
+	fi
+	
+	if [ -z "$GTAR" ] ; then
+		h_error "GNU tar was not found"
+		return 1
+	fi
+
+	T_DATE=`date`
+	T_DATE2=`h_formdate 3`
+
+	if ! [ -z "$EXCLUDEFILE" ] ; then
+		if ! [ -e "$EXCLUDEFILE" ] ; then
+			h_error "'$EXCLUDEFILE' does not exist"
+			return 1
+		fi
+
+		T_EXCL_F="-X $EXCLUDEFILE"
+	else
+		T_EXCL_F=""
+	fi
+
+	if [ -z "$EXCLUDE" ] ; then
+		T_EXCL=""
+	else
+		T_EXCL=`echo -n "$EXCLUDE" | \
+			awk 'BEGIN {RS=" "} {printf("--exclude=%s ", $0)}'`
+	fi
+
+	if ! [ -d "$STATEDIR" ] ; then
+		h_msg 5 "Creating $STATEDIR (STATEDIR)"
+		h_ensuredir "$STATEDIR"
+	fi
+
+	if [ -z "$DIRS" ] ; then
+		T_BDIRS=`cat "$DIRFILE"`
+	else
+		T_BDIRS="$DIRS"
+	fi
+
+	for dir in $T_BDIRS ; do
+		h_msg 7 "----------------------------------------"
+		FN=`echo "${dir}" | sed s,^/,, | sed s,/,.,g`
+		if [ -z "$FN" ] ; then
+			FN="$ROOTFN"
+			if [ -z "$FN" ] ; then
+				FN="root"
+			fi
+		fi
+
+		if h_is_true "$COMPRESS" ; then
+			FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar.xz"
+			extra="--xz"
+			h_msg 13 "Will compress"
+		else
+			FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar"
+			extra=""
+			h_msg 13 "Will NOT compress $COMPRESS"
+		fi
+
+		h_msg 6 "$dir -> $FN2"
+		(
+			STATEFILE=$(get_statefile "$STRATEGY" "$LEVEL" "$FN")
+			if [ -f "$STATEFILE" ] ; then
+				last=`cat $STATEFILE`
+				h_msg 7 "Last level $LEVEL backup of $dir: $last"
+			else
+				h_msg 7 "Last level $LEVEL backup of $dir: NEVER"
+			fi
+			
+			if [ "$LEVEL" == "0" ] ; then
+				h_msg 7 "Force FULL backup (LEVEL=0)"
+			else
+				if get_old_date "$STRATEGY" $LEVEL "$FN" ; then
+					h_msg 7 "Backup will be based on L$R_LLEVEL backup at $R_LDATE"
+				fi
+			fi
+
+			R_TARSTATE="$STATEFILE.snar"
+			rm -f "$R_TARSTATE.new"
+			if [ -e "$R_TARSTATE0" ] ; then
+				h_msg 11 "Copying $R_TARSTATE0 to $R_TARSTATE.new"
+				cp -f "$R_TARSTATE0" "$R_TARSTATE.new"
+			else
+				h_msg 11 "Creating $R_TARSTATE.new"
+				touch "$R_TARSTATE.new"
+			fi
+		
+			h_ensuredir /var/log/vbackup
+			
+			set -f
+			XZ_OPT=-e9 $GTAR -c --one-file-system -C "$dir" \
+				$T_EXCL_F $T_EXCL \
+				--listed-incremental="$R_TARSTATE.new" \
+			 	--sparse $extra \
+				--level=$LEVEL \
+				-V "L${LEVEL} backup of ${dir} at ${T_DATE}" \
+				-f "$FN2" . 2>>/var/log/vbackup/$STRATEGY.log
+			set +f
+		
+			# Exit code 1 is a warning. Don't let it fail
+			# our backup
+			if [ "$?" -ge 2 ] ; then
+				h_error "Backup of $dir may have failed"
+				return 1
+			fi
+
+			h_msg 11 "Renaming $R_TARSTATE.new to $R_TARSTATE"
+			mv -f "$R_TARSTATE.new" "$R_TARSTATE"
+
+			h_msg 6 "Done"
+			echo "${T_DATE}" > "$STATEFILE"
+			remove_unwanted "$STRATEGY" $LEVEL "$FN"
+		)
+		h_msg 7 "----------------------------------------"
+	done
+
+	return 0
+}
+
