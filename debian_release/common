@@ -1,0 +1,475 @@
+#!/bin/bash
+#
+# This file is part of vbackup.
+#
+# vbackup is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# vbackup is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with vbackup  If not, see <http://www.gnu.org/licenses/>.
+#
+# $Id$
+#
+# Library helper functions
+#
+
+# autoconf directories
+prefix="/usr"
+exec_prefix="${prefix}"
+bindir="${exec_prefix}/bin"
+sbindir="${exec_prefix}/sbin"
+libexecdir="${prefix}/lib/x86_64-linux-gnu"
+localstatedir="/var"
+libdir="${prefix}/lib/x86_64-linux-gnu"
+sysconfdir="/etc"
+datarootdir="${prefix}/share"
+datadir="${datarootdir}"
+mybindir="${datarootdir}/vbackup/bin"
+myscriptdir="${datarootdir}/vbackup/scripts"
+myconfdir="/etc/vbackup"
+myhelperdir="${datarootdir}/vbackup/helpers"
+mystatedir="/var/lib/vbackup/state"
+sampledir="${datarootdir}/vbackup/samples"
+wizdir="${datarootdir}/vbackup/wizard"
+
+# Package information
+PACKAGE_NAME="vbackup"
+PACKAGE_VERSION="1.0.1"
+PACKAGE_BUGREPORT="v13@v13.gr"
+PACKAGE_LICENSE="GPLv3"
+PACKAGE_COPYRIGHT="Copyright (c) 2006-2012 Stefanos Harhalakis"
+
+# Lookup an executable
+# Required for prepackaged vbackup
+function h_lookup()
+{
+	(
+	# Ensure that path contains /sbin and /usr/sbin
+	export PATH="$PATH:/sbin:/usr/sbin"
+	if [ -z "$1" ] ; then
+		F=$(which "$2")
+		if ! [ -z "$F" ] ; then
+			echo "$F"
+		fi
+	else
+		echo "$1"
+	fi
+	)
+}
+
+# Program locations
+ECHO_E="echo -e"
+XFSDUMP=$(h_lookup "" xfsdump)
+GFIND=$(h_lookup "find" find)
+GTAR=$(h_lookup "tar" tar)
+FDISK=$(h_lookup "" fdisk)
+SFDISK=$(h_lookup "" sfdisk)
+MDADM=$(h_lookup "" mdadm)
+LVDISPLAY=$(h_lookup "" lvdisplay)
+VGDISPLAY=$(h_lookup "" vgdisplay)
+PVDISPLAY=$(h_lookup "" pvdisplay)
+SCP=$(h_lookup "" scp)
+OPENSSL=$(h_lookup "" openssl)
+SLAPCAT=$(h_lookup "" slapcat)
+MD5SUM=$(h_lookup "" md5sum)
+GPG=$(h_lookup "" gpg)
+
+# Location of main programs
+B_BINDIR="$mybindir"
+# Location of backup scripts
+B_SCRIPTDIR="$myscriptdir"
+# Location of helper scripts
+B_HELPERDIR="$myhelperdir"
+# Base state directory
+B_STATEDIR="$mystatedir"
+
+MESSAGE_LEVEL=${MESSAGE_LEVEL:-8}
+
+#
+# Return the current date in a custom format
+#
+# $1:	The format:
+#	1:	YYMMDD
+#	2:	YYMMDDHH
+#
+# Prints the date
+#
+h_formdate()
+{
+	# For now - only one format
+	case "$1" in
+		0) date "+%u" ;;
+		1) date "+%y%m%d" ;;
+		2) date "+%y%m%d%H" ;;
+		3) date "+%y%m%d_%H-%M" ;;
+		4) date "+%y%m%d_%H-%M-%S" ;;
+		*) echo "Bad date format" >&2 exit 3 ;;
+	esac
+}
+
+#
+# Helper function to transform a filename
+#	$1 is the filename to transform
+# Sets:
+#	R		The resulted filename
+#
+h_transform()
+{
+	local D0 D1 D2 D3
+	local L
+
+	D0=$(h_formdate 0)
+	D1=$(h_formdate 1)
+	D2=$(h_formdate 2)
+	D3=$(h_formdate 3)
+	L="$LEVEL"
+
+	R=$(echo "$1" \
+		| sed "s,%D0%,$D0,g" \
+		| sed "s,%D1%,$D1,g" \
+		| sed "s,%D2%,$D2,g" \
+		| sed "s,%D3%,$D3,g" \
+		| sed "s,%L%,$L,g")
+}
+
+
+#
+# Helper function to form the destination directory
+#	$1 is the destination filename
+# Sets:
+#	R_DESTDIR	The destination filename
+#
+h_formdest()
+{
+	h_transform "$1"
+
+	R_DESTDIR="$DESTDIR0/$R/"
+}
+
+#
+# Ensure that a directory exists. Create if it doesn't exist
+# 	$1	Directory
+#	$2	Permissions (or nothing)
+h_ensuredir()
+{
+	if ! [ -d "$1" ] ; then
+		h_msg 12 "h_ensuredir: Creating $1"
+		mkdir -p "$1"
+	fi
+
+	if ! [ -z "$2" ] ; then
+		h_msg 12 "h_ensuredir: Set permission of $1 to $2"
+		chmod "$2" "$1"
+	fi
+}
+
+#
+# Same as h_ensuredir but displays an informational message too
+#
+h_ensuredestdir()
+{
+	if ! [ -d "$1" ] ; then
+		h_msg 5 "Creating $1 (DESTDIR)"
+	fi
+	h_ensuredir "$1" "$2"
+}
+
+#
+# Display a fatal error and exit with error code
+#
+#	$1	Errorcode or -x for no-exit
+#	$2-	Message
+#
+#	if $1 is -x then don't exit
+#
+h_fatal()
+{
+	local	R
+	local	EX
+
+	if [ "x$1" = "x-x" ] ; then
+		EX=0
+	else
+		R="$1"
+		EX=1
+	fi
+
+	shift
+
+	h_msg 1 "FATAL: $*"
+
+	if [ "$EX" = "1" ] ; then
+		exit $R
+	fi
+}
+
+
+#
+# Display an error that should terminate the program but leave
+# error handling to the caller
+#
+#	$*	Message
+#
+h_error()
+{
+	h_msg 2 "ERROR: $*"
+
+	return 0
+}
+
+#
+# Display a warning 
+#
+#	$*	Message
+#
+h_warn()
+{
+	h_msg 3 "WARNING: $*"
+
+	return 0
+}
+
+#
+# Display/log a debug/information message
+#
+#	$1	Level:
+#			0:	Always show
+#			1:	Fatal error
+#			2:	Error
+#			3:	Warning
+#			4:	Note
+#			5:	Information (Rare messages)
+#			6:	Information (Useful messages but not rare)
+#			7:	Information (Not so useful)
+#			10-19:	Debug
+#				10-14:	Debug messages that don't flood
+#				15-19:	Debug messages that may flood
+#	$2-	Message
+#
+#	If $1 equals to "-n" then no new line is added at the end of
+#	the message, all arguments are shifted one position to the left
+#	and life goes on as expected
+#
+# TODO:
+#	Add loging to file ? 
+#	Add timestamp for debuging messages ?
+#
+h_msg()
+{
+	local	L
+	local	N
+	local	D
+
+	if [ "$1" = "-n" ] ; then
+		N="-n"
+		shift
+	fi
+
+	L="$1"
+	shift
+
+	[ "$L" -gt "$MESSAGE_LEVEL" ]  && return
+
+	D=`h_formdate 4`
+	h_ensuredir /var/log/vbackup
+	if [ "$L" -lt 10 ] ; then
+		$ECHO_E $D $N "$*" >> /var/log/vbackup/$STRATEGY.log
+	else
+		$ECHO_E $D $N "L$L: $*" >> /var/log/vbackup/$STRATEGY.log
+	fi
+
+	return 0
+}
+
+#
+# Display a message adding spaces
+#
+#	$1	Size
+#	$2	Message
+#
+h_fixmsg()
+{
+	printf "%-${1}s" "$2"
+}
+
+#
+# Check whether a variable is true or false
+#
+# True is 1, yes, on
+# False is 0, no, off
+# Everything else is error and returns the default
+#
+#	$1	Value to check
+#	$2	Default value (used when $1 is empty)
+#
+# Return:
+#	0: True
+#	1: False
+#	2: Error
+#
+h_is_true()
+{
+	local T
+
+	T=${1:-$2}
+
+	case "${T,,*}" in
+		yes|y|1|on)
+			return 0
+			;;
+		no|n|0|off)
+			return 1
+			;;
+		*)
+			return 2
+			;;
+	esac
+}
+
+#
+# Internal function
+# Common function to display the text before a question
+h_ask_txt()
+{
+	clear
+	if [ ! -z "$1" ] ; then
+		echo
+		echo "$1"
+		echo
+	fi
+}
+
+#
+# Ask a true/false question with an optional default answer
+#
+# Parameters:
+# 	$1	Multi-line description text
+#	$2	Sinle-line question
+#	$3	Optional default answer (y/n)
+#
+# Return:
+#	0	Yes
+#	1	No
+h_ask_yesno()
+{
+	local	prom ans ans2
+
+	h_ask_txt "$1"
+
+	prom="$2 (y/n) "
+	if [ "$3" = "y" ] ; then
+		ans2=y
+	elif [ "$3" = "n" ] ; then
+		ans2=n
+	fi
+
+	while true ; do
+		read -rp "$prom" -ei "$ans2" ans
+
+		if [ "x$ans" = "xy" ] ; then
+			return 0
+		elif [ "x$ans" = "xn" ] ; then
+			return 1
+		fi
+	done
+}
+
+#
+# Ask a question and get a string as an answer
+#
+# Parameters:
+#	Same as h_ask_yesno()
+#
+# Return:
+#	$RET	The string that was entered
+h_ask_str()
+{
+	local	prom ans
+
+	h_ask_txt "$1"
+
+	prom="$2 "
+
+	read -rp "$prom" -ei "$3" RET
+
+	if [ -z "$RET" ] ; then
+		RET="$3"
+	fi
+}
+
+#
+# Split a filename in the form of PRIO-NAME.TYPE
+# to PRIORITY, NAME, TYPE
+#
+# @param $1	The filename to split
+#
+# Return:
+#	$R_PRIO	The priority
+#	$R_NAME	The name
+#	$R_TYPE	The type
+h_split_fn()
+{
+	R_PRIO=$(echo "$1" | ( IFS=- read -r a b ; echo $a ) )
+	R_NAME=$(echo "$1" | ( IFS=- read -r a b ; echo $b ) | \
+			( IFS=. read -r a b ; echo $a ) )
+	R_TYPE=$(echo "$1" | ( IFS=- read -r a b ; echo $b ) | \
+			( IFS=. read -r a b ; echo $b ) )
+}
+
+#
+# A filtering function according to the logging level
+#
+# Can be used to filter (e.g.) stderr, but assuming that stderr messages
+# are of a certain level. This is a better approach instead of doing 2>/dev/null
+#
+# E.g:
+#    mysqldp 2> >(h_filter 7 >&2)
+# The above will make stderr messages to be logged as loglevel 7. When
+# filtering it may be needed to send the output to stderr (hence the >&2) as
+# stdout may be sent to another place
+#
+# @param $1	The logging level
+h_filter()
+{
+	L="$1"
+
+	if [ "$L" -gt "$MESSAGE_LEVEL" ] ; then
+		cat > /dev/null
+	else
+		while read -r line ; do
+			h_msg $L "$line"
+		done
+	fi
+
+	return 0
+}
+
+#
+# Check whether $1 is a number
+#
+# @param $1	The value to check
+# @param $2	(optional) minimum accepted value
+# @param $3	(optional) maximum accepted value
+# @return 0/1
+h_is_number()
+{
+	if ! [[ "x$1" =~ ^x[0-9]+$ ]] ; then
+		return 1
+	fi
+
+	[[ -z "$2" ]] && return 0
+	[[ "$1" -lt "$2" ]] && return 1
+
+	[[ -z "$3" ]] && return 0
+	[[ "$1" -gt "$3" ]] && return 1
+
+	return 0
+}
+

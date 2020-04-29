@@ -1,0 +1,832 @@
+#!/bin/bash
+#
+# Copyright (C) 2006-2012 Stefanos Harhalakis
+#
+# This file is part of vbackup.
+#
+# vbackup is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# vbackup is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with vbackup  If not, see <http://www.gnu.org/licenses/>.
+#
+# $Id$
+#
+# The main backup script
+#
+
+prefix="/usr"
+datarootdir="${prefix}/share"
+datadir="${datarootdir}"
+myhelperdir="${datarootdir}/vbackup/helpers"
+
+. $myhelperdir/common
+
+do_version_head()
+{
+	cat << _END
+$PACKAGE_NAME v$PACKAGE_VERSION
+_END
+}
+
+do_version_bugreport()
+{
+	cat << _END
+Report bugs to $PACKAGE_BUGREPORT
+_END
+}
+
+# Show version and copyright information
+do_version()
+{
+	cat << _END
+$PACKAGE_NAME v$PACKAGE_VERSION Copyright (c) 2006-2012 Harhalakis Stefanos \
+<$PACKAGE_BUGREPORT>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+Report bugs to $PACKAGE_BUGREPORT
+
+_END
+}
+
+# Show generic help
+do_help()
+{
+	do_version_head
+	cat << _END
+Usage:
+    vbackup [ -d <level> ] [ --dir <directory> ] [ --check ]
+            [ <strategy> ] <level>
+
+        --dir <directory>
+                        Base directory of configuration files.
+                        Default is: $myconfdir
+        --check         Check the configuation and exit.
+        -d <level>      Set the message level to <level> (default: \
+$MESSAGE_LEVEL)
+
+        Perform a level <level> backup based on the <strategy> strategy.
+        For example, if <strategy> is not provided then the configuration
+        files will be under:
+        $myconfdir/rc.d
+
+        If <strategy> is "remote" then the configuration files will be under:
+        $myconfdir/rc.remote.d
+
+        Message levels:
+            1: Fatal, 2: Error, 3: Warning, 4: Note, 5-7: Information
+            5: Rare messages, 6: Useful messages, 7: Not so useful
+            10-14: Debug messages that don't flood
+            15-19: Debug messages that flood
+
+        -d and --dir are also available for the following commands
+
+ or vbackup { --list | --help | --help <module> | --version | --init }
+
+        --help          Get this help.
+        --help <module> Get module specific information.
+        --list          List all available backup scripts.
+        --version       Show version and license information.
+        --init          Alias for --rc --init. See that
+
+ or vbackup --rc --list [ <strategy> [ <level> ] ]
+ or vbackup --rc --init <strategy>
+ or vbackup --rc { --add | --delete } [ <strategy> ] <config>
+ or vbackup --rc { --enable | --disable } [ <strategy> ] <config>
+
+        --add           Add a backup type to the rc.d directory.
+                        You will be asked for configuratio options.
+        --delete        Delete a backup type from the rc.d directory.
+        --disable ...   Disable a script
+        --enable ...    Enable a script
+        --init          Initialize (create) a new backup strategy.
+        --list          List backup types in rc.d directory.
+        --list <level>  List scripts of a backup level.
+
+        <config> is the config file to be written. It is in the
+        form <priority>-<name>.<type>.  Example: 40-home.xfsdump
+        It can also be in the form of <priority>-<name>-<level>.<type>
+        in which case it will only be applied to a certain level
+
+        <strategy> is an (optional) strategy name. It can be ommitted if there
+        is no need for multiple strategies
+
+        <level> is the backup level. It should be a single digit number.
+_END
+	do_version_bugreport
+	exit 0
+}
+
+# Validate a configuration directory name
+# $1 is the directory name
+validate_dir()
+{
+	if [ ! -d "$1" ] ; then
+		h_error "No such directory: $1"
+		exit 1
+	fi
+}
+
+# List available scripts
+do_list()
+{
+	do_version_head
+	$B_BINDIR/run --list
+	exit 0
+}
+
+# Set the CONFDIR variable
+# Also set the LEVEL variable
+# Also set the STRATEGY variable
+# Also set CONFSTYLE to the configuration style (1 is old, 2 is new)
+# $1 is the strategy or an absolute path to the config files
+# $2 is the level or nothing if $1 is a path or it's a new style config
+set_confdir()
+{
+	if [ ! "$1" = "${1#.}" ] ; then
+		h_error "Bad strategy: $1"
+		h_error "Strategy must not begin with a dot"
+		exit 1
+	fi
+
+	if [ ! "$2" = "${2#.}" ] ; then
+		h_error "Bad level: $2"
+		h_error "Level must not begin with a dot"
+		exit 1
+	fi
+
+	if [ -z "$1" ] ; then
+		CONFDIR="${myconfdir}/rc.d"
+	else
+		CONFDIR="${myconfdir}/rc.$1.d"
+	fi
+
+	if test -d "$CONFDIR" ; then
+		if test -e "$CONFDIR/vbackup.conf" ; then
+			CONFSTYLE="2"
+		else
+			CONFSTYLE="1"
+			if [ -z "$1" ] ; then
+				CONFDIR="${myconfdir}/backup.$2"
+			else
+				CONFDIR="${myconfdir}/backup.$1.$2"
+			fi
+		fi
+	else
+		CONFDIR="$1"
+		CONFSTYLE="2"
+	fi
+
+	if ! test -d "$CONFDIR" ; then
+		h_fatal 1 "No such dir: $CONFDIR"
+	fi
+
+	if ! test -e "$CONFDIR/vbackup.conf" ; then
+		h_fatal 1 "No such file: $CONFDIR/vbackup.conf"
+	fi
+
+	export STRATEGY="$1"
+	export LEVEL="$2"
+
+	if [[ "$CONFSTYLE" = "2" ]] ; then
+		h_msg 6 "New style configuration"
+	else
+		h_msg 5 "Old style configuration. Consider upgrading"
+	fi
+
+	h_msg 6 "Using $CONFDIR"
+
+	validate_dir "$CONFDIR"
+}
+
+# Read global configuration file if available
+read_global_conf()
+{
+	local	G
+
+	G="$CONFDIR/vbackup.conf"
+
+	if ! [ -f "$G" ] ; then
+		h_fatal 1 "Global backup configuration file:\n$G\ndoes not exist"
+	fi
+
+	h_msg 7 "Reading: $G"
+
+	. $G
+
+	# Export global variables
+
+	h_msg 12 "Global var COMPRESS: $COMPRESS"
+	export COMPRESS
+	
+	h_msg 12 "Global var BACKUP_TYPE: $BACKUP_TYPE"
+	export BACKUP_TYPE
+}
+
+# Get the script to be executed in the proper order
+# Expects CONFDIR to be set
+# Expects LEVEL to be set. If not set then return all scripts
+# Outputs the script names to stdout
+get_scripts()
+{
+	pushd "$CONFDIR" > /dev/null
+	$GFIND . -maxdepth 1 \( -type f -or -type l \) -name '*.*' |
+		sort |
+		grep '^./[0-9]' |
+		while read -r fn ; do
+			# No magic needed for old style configs
+			if [[ $CONFSTYLE = 1 ]] ; then
+				echo "${fn#./}"
+				continue
+			fi
+
+			if [[ ! -z "$LEVEL" ]] &&
+				[[ "x$fn" =~ ^x./(.*)-([0-9])\.([^.]*)$ ]] &&
+				[[ ${BASH_REMATCH[2]} != $LEVEL ]] ; then
+					continue
+			fi
+			echo "${fn#./}"
+		done
+	popd > /dev/null
+}
+
+# Common part for run/check
+# $1:	run, check indicating what to do
+do_run_check_common()
+{
+	local	F
+	local	D
+	local	M
+	local	SCRIPTS
+
+	if [ "$1" != "run" ] && [ "$1" != "check" ] ; then
+		h_fatal 1 "Bad argument to do_run_check_common()"
+	fi
+
+	# If this becomes one, then all scripts should exit without doing
+	# aything at all, unless there is a very good reason (like umount)
+	export ABORT=0
+
+	# Transform DESTDIR0
+	h_transform "$DESTDIR0"
+	DESTDIR0="$R"
+
+	export DESTDIR0
+
+	SCRIPTS=$(get_scripts)
+	h_msg 11 "Scripts to run: $SCRIPTS"
+
+	cd "$CONFDIR"
+	for F in $SCRIPTS ; do
+		D=`echo "$F" | awk -F . '{print $NF}'`
+		T=`echo "$F" | grep '^[0-9]'`
+
+		h_msg 11 "T - D: $T - $D"
+		if [ -z "$T" ] || [ -z "$D" ] ; then
+			continue
+		fi
+
+		h_msg 11 "$fn -> $D"
+		if [ "$1" = "run" ] ; then
+			$B_BINDIR/run "$D" "$T"
+			case "$?" in
+				1)
+					h_error "$D exited with errors (non-fatal)"
+					;;
+				2)
+					h_fatal -x "$D exited with errors"
+					return
+					;;
+				3)
+					h_fatal 1 "$D exited with errors"
+					;;
+			esac
+		else
+			h_msg 7 "Checking $T..."
+			$B_BINDIR/run "$D" --check "$T"
+		fi
+	done
+}
+
+# Check configuration
+# $1 is the strategy
+# $2 is the level
+do_check()
+{
+	set_confdir "$1" "$2"
+
+	read_global_conf
+
+	do_run_check_common check
+}
+
+# Display script help
+# $1 is the script name
+do_script_help()
+{
+	do_version_head
+
+	$B_BINDIR/run "$1" --help
+}
+
+# Run the backup configuration files
+# $1 is the strategy
+# $2 is the level
+do_run()
+{
+	set_confdir "$1" "$2"
+
+	read_global_conf
+
+	do_run_check_common run
+}
+
+#
+# Get a sample config file and create a temp file with the configuration
+# after asking questions to the user
+#
+# Parameters
+#	$1	The full path to the config file
+#
+# Returns:
+#	R_CFG	The full path to the newly create config file.
+#		This needs to be deleted by the caller when finished.
+do_rc_ask_config()
+{
+	INFILE="$1"
+	# For this to work we:
+	# - Ignore all lines from the top of the file up to the first empty line
+	# - After that find all lines starting with '# ' (hash followed by
+	#   space), or that equal '#'  and show them as comment
+	# - If the first comment line includes (required) then this is a
+	#   mandatory option
+	# - Find ^XXXX=YYYY or ^#XXXX=YYYY and ask for the value of XXXX:
+	#   - If the line started with # then interpret an enter as nothing
+	#   - Else interpret the enter as the default (YYYY)
+
+	# The following code has some advanced bash hackery that I'm not
+	# proud of. In a perfect world things would be simpler.
+	TCFG=$(tempfile)
+	(
+	 	exec 3<&0
+		# Handle first lines
+		(
+		while read -r line ; do
+			echo "$line" >> $TCFG
+			# Support modules that do not support autoconfig
+			# For example, the "exec" module cannot be configured
+			# From here
+			if [[ ${line:0:2} == '## No autoconfig' ]] ; then
+				h_msg 4 "You will have to configure this by hand."
+				# Copy the sample file to the temp config file
+				# and return
+				cat $INFILE > $TCFG
+				exit 0
+			fi
+
+			if [[ "x${line:0:1}" != "x#" ]] &&
+				[[ "x$line" != "x#" ]] ;  then
+				break;
+			fi
+		done
+
+		while read -r line ; do
+			# Ignore empty lines
+			while [[ "$line" = "" ]] ; do
+				echo >> $TCFG
+				if ! read -r line ; then
+					break
+				fi
+			done
+
+	 		firstline=1
+			REQ=0
+			while [[ "x${line:0:2}" = "x# " ]] ||
+				[[ "x$line" = 'x#' ]] ; do
+				# Scan the first line for 'required'
+				if [[ $firstline = 1 ]] ; then
+					if [[ $line =~ (required) ]] ; then
+						REQ=1
+					fi
+					firstline=0
+				fi
+
+				echo $line
+				echo $line >> $TCFG
+				read -r line
+			done
+
+			# Now we are at a line that is either not a comment
+			# or doesn't start with '# '
+			
+			# If it's just an empty line the go-on
+			if [[ -z "$line" ]] ; then
+				echo >> $TCFG
+				continue
+			fi
+
+			while : ; do
+				# If it does not start with # then consider
+				# this a default and remove any quotes
+				if [[ "${line:0:1}" != "#" ]] ; then
+					DEFAULT=$(echo "$line" \
+						| ( IFS== read -r a b ; echo $b) \
+						| ( sed -e 's/^"//' \
+							-e 's/"$//' ) )
+				else
+					DEFAULT=""
+				fi
+
+				# Also get the variable name
+				VAR=$(echo ${line#\#} | \
+					( IFS== read -r a b ; echo $a ))
+
+				# Show a sample if we have one
+				if ! [[ -z "$DEFAULT" ]] ; then
+					echo "#"
+					echo "# Sample value: $DEFAULT"
+				fi
+				# Now pop the question
+				# read -r -p \
+				#   "$VAR do you accept $DEFAULT as your value?"
+				while : ; do
+					read -r \
+						-e -i "$DEFAULT" \
+						-p "Enter value for $VAR: " \
+						ans <&3
+
+					if [[ "$REQ" = 0 ]] ||
+						[[ ! -z "$ans" ]] ; then
+						break
+					fi
+				done
+
+				# Reset this here
+				REQ=0
+
+				echo "$VAR=\"$ans\"" >> $TCFG
+
+				# Get another one until we reach EOF or
+				# an empty line
+				if ! read -r line ; then
+					break
+				fi
+
+				if [[ "x$line"  = "x" ]] ; then
+					echo "$line" >> $TCFG
+					break
+				fi
+			done
+			echo
+
+		done
+		) < $INFILE
+	)
+
+	R_CFG="$TCFG"
+}
+
+# Implement --rc --add
+# $1:	The filename
+# $2:	The full path to file
+# $3:	The strategy name (used for creating a meaningful message)
+do_rc_add()
+{
+	local FN FN2 PRIO TYPE NAME SAMPLE STRATEGY
+
+	FN="$1"
+	FN2="$2"
+	STRATEGY="$3"
+
+	h_split_fn "$FN"
+
+	PRIO="$R_PRIO"
+	TYPE="$R_TYPE"
+	NAME="$R_NAME"
+
+	if [[ -e "$FN2" ]] || [[ -h "$FN2" ]] ; then
+		h_error "File already exists: $FN2"
+		h_error "Delete it first using: vbckup --rc --delete $STRATEGY $FN"
+		return 1
+	fi
+
+	ret=0
+
+	SAMPLE="$sampledir/sample.$TYPE"
+
+	if ! [[ -e "$SAMPLE" ]] ; then
+		h_error "Bad type $TYPE"
+		return 1
+	fi
+
+	echo "Configuring file $FN for module $TYPE"
+	echo "--------------------------------------------------------------"
+	echo
+
+	do_rc_ask_config "$SAMPLE"
+
+	mv -i $R_CFG $FN2
+
+	cat << _KOKO
+---------------------------------------------------------------------------
+ Finished.
+
+ File was placed at:
+
+ $FN2
+
+ Feel free to edit the file now or in the future.
+---------------------------------------------------------------------------
+_KOKO
+
+	return $ret
+}
+
+# Manage the --rc parameter
+do_rc()
+{
+	local RCD DST
+	local files
+	local PRIO TYPE NAME FN FN2
+	local SAMPLE
+	local STRATEGY
+	local LEVEL
+
+	RCD="$myconfdir/rc.d"
+
+	ret=0
+
+	STRATEGY=''
+	LEVEL=''
+
+	case "$1" in
+		--list)
+
+			if h_is_number "$2" ; then
+				STRATEGY=""
+				LEVEL="$2"
+			else
+				STRATEGY="$2"
+				LEVEL="$3"
+			fi
+
+			if [[ -z "$STRATEGY" ]] ; then
+				STDIR=""
+			else
+				STDIR=".$STRATEGY"
+			fi
+
+			CONFDIR="$myconfdir/rc${STDIR}.d/"
+
+			if [[ ! -d "$CONFDIR" ]] ; then
+				h_error "No such strategy: $STRATEGY"
+				return 1
+			fi
+
+			# Get existing files in RCD
+			files=$(get_scripts)
+
+			for i in $files ; do
+				echo $i
+			done
+			;;
+		--add|--delete)
+			if [[ "x$2" = "x" ]] ; then
+				do_help
+				return 1
+			fi
+
+			if [[ -z "$3" ]] ; then
+				FN="$2"
+			else
+				STRATEGY="$2"
+				FN="$3"
+			fi
+
+			if [[ -z "$STRATEGY" ]] ; then
+				STDIR=""
+			else
+				STDIR=".$STRATEGY"
+			fi
+
+			RCD="$myconfdir/rc${STDIR}.d/"
+
+			# Form the full path
+			FN2="$RCD/$FN"
+			h_msg 12 "FN2: $FN2"
+
+			if [[ "x$1" = "x--delete" ]] ; then
+				if [[ -e "$FN2" ]] || [[ -h "$FN2" ]] ; then
+					rm "$FN2"
+					h_msg 4 "Removed $FN"
+				else
+					h_error "No such file $FN"
+					ret=1
+				fi
+			else
+				h_ensuredir "$RCD"
+				do_rc_add "$FN" "$FN2" "$STRATEGY"
+				ret="$?"
+			fi
+			;;
+		--enable|--disable)
+			if [[ "x$2" = "x" ]] ; then
+				do_help
+				return 1
+			fi
+
+			if [[ -z "$3" ]] ; then
+				STRATEGY=""
+				FN="$2"
+			else
+				STRATEGY="$2"
+				FN="$3"
+			fi
+
+			if [[ -z "$STRATEGY" ]] ; then
+				STDIR=""
+			else
+				STDIR=".$STRATEGY"
+			fi
+
+			RCDIR="rc${STDIR}.d"
+			RCD="$myconfdir/$RCDIR"
+
+			# The ON and OFF filenames
+			ONFN="${FN#.off}"
+			OFFFN="$ONFN.off"
+
+			ONFN2="$RCD/$ONFN"
+			OFFFN2="$RCD/$OFFFN"
+
+			if [[ "x$1" == "x--enable" ]] ; then
+				if [[ -e "$ONFN2" ]] || [ -h "$ONFN2" ] ; then
+					h_msg 5 "$ONFN is already enabled"
+					return 0
+				fi
+
+				if ! [ -e "$OFFFN2" ] && ! [ -h "$OFFFN2" ] ; then
+					h_error "No such file: $ONFN"
+					return 1
+				fi
+
+				mv -f "$OFFFN2" "$ONFN2"
+
+				#ln -s "$FN2" "$DST"
+				#ln -s "../$RCDIR/$FN" "$DST"
+
+				h_msg 4 "Enabled $ONFN"
+			else
+				if [ -e "$OFFFN2" ] || [ -h "$OFFFN2" ] ; then
+					h_msg 5 "$ONFN is already disabled"
+					return 0
+				fi
+
+				if ! [ -e "$ONFN2" ] && ! [ -h "$ONFN2" ] ; then
+					h_error "No such file: $ONFN"
+					return 1
+				fi
+
+				mv -f "$ONFN2" "$OFFFN2"
+
+				h_msg 4 "Disabled $ONFN"
+			fi
+
+			ret=0
+
+			;;
+		--init)
+			STRATEGY="$2"
+
+			if [[ -z "$STRATEGY" ]] ; then
+				STDIR=""
+			else
+				STDIR=".$STRATEGY"
+			fi
+
+			DST="$myconfdir/rc${STDIR}.d"
+			if ! [[ -d "$DST" ]] ; then
+				h_msg 4 "Initializing strategy $STRATEGY"
+				# Delay the creation of the directory in
+				# case the user interrupts
+			else
+				# If strategy exists then let the user know
+				h_error "Strategy $STRATEGY already exists"
+				return 1
+			fi
+
+			DST2="$DST/vbackup.conf"
+
+			SAMPLE="$sampledir/vbackup.conf.sample"
+
+			do_rc_ask_config $SAMPLE
+
+			if ! [[ -d "$DST" ]] ; then
+				mkdir "$DST"
+			fi
+
+			mv $R_CFG $DST2
+
+			;;
+		*)
+			do_help
+			ret=1
+			;;
+	esac
+
+	return $ret
+}
+
+if [ "x$1" = "x-d" ] ; then
+	export MESSAGE_LEVEL="$2"
+	shift
+	shift
+fi
+
+if [ "x$1" = "x--dir" ] ; then
+	export myconfdir="$2"
+	shift
+	shift
+
+	if [[ ! -d "$myconfdir" ]] ; then
+		h_error "No such directory $myconfdir"
+		exit 1
+	fi
+fi
+
+case "$1" in
+	--help)
+		# Display generic help
+		if [ -z "$2" ] ; then
+			do_help
+		else
+			do_script_help "$2"
+		fi
+		;;
+	--list)
+		# List all available backup scripts
+		do_list
+		;;
+	--check)
+		# check configuration
+		if ! test -z "$2" && h_is_number "$2" ; then
+			S=""
+			L="$2"
+		else
+			S="$2"
+			L="$3"
+		fi
+
+		if test -z "$L" ; then
+			h_msg 4 "No level specified. Assuming 0"
+			L="0"
+		fi
+
+		do_check "$S" "$L"
+		;;
+	--version)
+		do_version
+		;;
+	--rc)
+		shift
+		do_rc "$@"
+		;;
+	--init)
+		# Alias for --rc --init
+		do_rc "$@"
+		;;
+	-*)
+		do_help
+		;;
+	*)
+		# Assume that $1 is the configuration dir name
+		if [ -z "$1" ] || [ ! -z "$3" ] ; then
+			do_help
+		fi
+
+
+		if [ -z "$2" ] ; then
+			do_run "" "$1"
+		else
+			do_run "$1" "$2"
+		fi
+		;;
+esac
+
+

@@ -1,0 +1,235 @@
+#!/bin/bash
+#
+# This file is part of vbackup.
+#
+# vbackup is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# vbackup is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with vbackup  If not, see <http://www.gnu.org/licenses/>.
+#
+# $Id$
+#
+# Main script used to invoke backup scripts
+# The first argument is the script to invoke
+# The second argument is the configuration file
+#
+
+prefix="/usr"
+datarootdir="${prefix}/share"
+datadir="${datarootdir}"
+myhelperdir="${datarootdir}/vbackup/helpers"
+
+. $myhelperdir/common
+
+# Show generic help
+do_gen_help()
+{
+	cat << _END
+Usage:
+        run <backup script> <configuration file>
+                To invoke a backup script
+
+     or run <backup script> --check <configuration file>
+                To check configuration
+
+     or run <backup script> --help
+                To get help for a script
+
+     or run --help
+                To get this help
+
+     or run --list
+                To list available backup scripts
+
+_END
+	exit 0
+}
+
+# List available scripts
+do_list()
+{
+	cd "$B_SCRIPTDIR"
+	echo
+	h_fixmsg 15 "Name"
+	h_fixmsg 8 "Version"
+	echo "Description"
+
+	h_fixmsg 15 "--------------"
+	h_fixmsg 8 "-------"
+	echo "------------------------------"
+
+	for fn in * ; do
+		# Source the file to get NAME, VERSION and DESC
+		# and display them
+		# Use () to avoid polution
+		(
+			. ./$fn
+			h_fixmsg 15 "$NAME"
+			h_fixmsg 8 " $VERSION"
+			echo "$DESC"
+		)
+	done
+	echo
+	exit 0
+}
+
+# Validate a script name
+# $1 is the script name
+validate_script()
+{
+	if [ ! -f "$B_SCRIPTDIR/$1" ] ; then
+		h_error "No such script: $1"
+		exit 1
+	fi
+}
+
+# Validate a configuration file name
+# $1 is the configuration file name
+validate_conf()
+{
+	if [ ! -f "$1" ] ; then
+		h_error "No such script: $1"
+		h_error
+		exit 1
+	fi
+}
+
+# Invoke help for a script
+# $1 is the script name
+do_script_help()
+{
+	validate_script "$1"
+
+	# Source the script
+	. "$B_SCRIPTDIR/$1"
+
+	cat << _END
+
+Module $NAME v$VERSION
+	$DESC
+	$COPYRIGHT
+	License: $LICENSE
+	Contact: $CONTACT
+
+_END
+
+	# Call do_help (included in the script)
+	do_help
+	exit 0
+}
+
+# $1 one of "check", "run"
+# $2 is the script name
+# $3 is the configuration file
+do_script_check_run_common()
+{
+	if ! [[ "$1" = "check" ]] && ! [[ "$1" == "run" ]] ; then
+		h_fatal 1 "Must be check or run"
+	fi
+
+	validate_script "$2"
+	validate_conf "$3"
+
+	export DESTDIR=""
+	(
+	# Set STATEDIR
+	STATEDIR="$B_STATEDIR/$2"
+
+	# Source the script
+	. "$B_SCRIPTDIR/$2"
+
+	# Source the configuration
+	. ./"$3"
+
+	if ! do_check_conf ; then
+		return 1
+	fi
+
+	if [[ "$1" == "check" ]] ; then
+		return 0
+	else
+		# If this script has the DESTDIR variable then prepend it with
+		# DESTDIR0 and transform it as needed
+		if [ ! -z "$DESTDIR" ] ; then
+			h_formdest "$DESTDIR"
+			DESTDIR="$R_DESTDIR"
+			[ "x$2" = "xoff" ] || h_ensuredestdir "$DESTDIR"
+			h_msg 11 "DESTDIR: $DESTDIR"
+		fi
+
+		do_run
+	fi
+	)
+
+	return $?
+}
+
+# Invoke check conf for a script
+# $1 is the script name
+# $2 is the configuration file
+do_script_check_conf()
+{
+	do_script_check_run_common "check" "$1" "$2"
+
+	return $?
+}
+
+# Invoke a script
+# $1 is the script name
+# $2 is the configuration file
+do_script_run()
+{
+	do_script_check_run_common "run" "$1" "$2"
+
+	return $?
+}
+
+if [ -z "$1" ] ; then
+	do_gen_help
+	exit 0
+fi
+
+case "$1" in
+	--help)
+		# Display generic help
+		do_gen_help
+		;;
+	--list)
+		# List all available backup scripts
+		do_list
+		;;
+	*)
+		# Assume that $1 is the script name
+		if [ -z "$2" ] ; then
+			do_gen_help
+		fi
+		case "$2" in
+			--help)
+				# Do help for a script
+				do_script_help "$1"
+				;;
+			--check)
+				# Check requires a third argument
+				if [ -z "$3" ] ; then
+					do_gen_help
+				fi
+				do_script_check_conf "$1" "$3"
+				;;
+			*)
+				# Assume $2 is the configuration file
+				do_script_run "$1" "$2"
+				;;
+		esac
+		;;
+esac
+
+exit $?
+
