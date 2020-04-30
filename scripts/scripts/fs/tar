@@ -231,7 +231,7 @@ do_run()
 			fi
 		fi
 
-		FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar.z"
+		FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar.7z"
 
 		h_msg 6 "$dir -> $FN2"
 		(
