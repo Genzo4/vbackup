@@ -193,6 +193,9 @@ set_confdir()
 		CONFSTYLE="2"
 	fi
 
+	export STRATEGY="$1"
+	export LEVEL="$2"
+
 	if ! test -d "$CONFDIR" ; then
 		h_fatal 1 "No such dir: $CONFDIR"
 	fi
@@ -206,9 +209,6 @@ set_confdir()
 	else
 		h_msg 5 "Old style configuration. Consider upgrading"
 	fi
-
-	export STRATEGY="$1"
-	export LEVEL="$2"
 
 	h_msg 6 "Using $CONFDIR"
 
