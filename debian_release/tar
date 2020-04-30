@@ -270,7 +270,7 @@ do_run()
 			 	--sparse \
 				--level=$LEVEL \
 				-V "L${LEVEL} backup of ${dir} at ${T_DATE}" \
-				-f - . | 7z a -bd -si -mx=$COMPRESS_LEVEL -mmt=on -v$VOLUME_SIZE "$FN2" . 2>>/var/log/vbackup/$STRATEGY.log
+				-f - . | 7z a -bd -si -mx=$COMPRESS_LEVEL -mmt=on -v$VOLUME_SIZE "$FN2" . >> /var/log/vbackup/$STRATEGY.log
 			set +f
 		
 			# Exit code 1 is a warning. Don't let it fail
