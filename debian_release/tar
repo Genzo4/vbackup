@@ -231,15 +231,7 @@ do_run()
 			fi
 		fi
 
-		if h_is_true "$COMPRESS" ; then
-			FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar.xz"
-			extra="--xz"
-			h_msg 13 "Will compress"
-		else
-			FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar"
-			extra=""
-			h_msg 13 "Will NOT compress $COMPRESS"
-		fi
+		FN2="$DESTDIR/$STRATEGY.$LEVEL.$T_DATE2.tar.z"
 
 		h_msg 6 "$dir -> $FN2"
 		(
@@ -272,13 +264,13 @@ do_run()
 			h_ensuredir /var/log/vbackup
 			
 			set -f
-			XZ_OPT=-e9 $GTAR -c --one-file-system -C "$dir" \
+			$GTAR -c --one-file-system -C "$dir" \
 				$T_EXCL_F $T_EXCL \
 				--listed-incremental="$R_TARSTATE.new" \
-			 	--sparse $extra \
+			 	--sparse \
 				--level=$LEVEL \
 				-V "L${LEVEL} backup of ${dir} at ${T_DATE}" \
-				-f "$FN2" . 2>>/var/log/vbackup/$STRATEGY.log
+				-f - . | 7z a -bd -si -mx=$COMPRESS_LEVEL -mmt=on -v$VOLUME_SIZE "$FN2" . 2>>/var/log/vbackup/$STRATEGY.log
 			set +f
 		
 			# Exit code 1 is a warning. Don't let it fail

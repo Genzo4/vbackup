@@ -201,14 +201,14 @@ set_confdir()
 		h_fatal 1 "No such file: $CONFDIR/vbackup.conf"
 	fi
 
-	export STRATEGY="$1"
-	export LEVEL="$2"
-
 	if [[ "$CONFSTYLE" = "2" ]] ; then
 		h_msg 6 "New style configuration"
 	else
 		h_msg 5 "Old style configuration. Consider upgrading"
 	fi
+
+	export STRATEGY="$1"
+	export LEVEL="$2"
 
 	h_msg 6 "Using $CONFDIR"
 
@@ -231,12 +231,15 @@ read_global_conf()
 	. $G
 
 	# Export global variables
-
-	h_msg 12 "Global var COMPRESS: $COMPRESS"
-	export COMPRESS
+	
+	h_msg 12 "Global var COMPRESS_LEVEL: $COMPRESS_LEVEL"
+	export COMPRESS_LEVEL
+	
+	h_msg 12 "Global var VOLUME_SIZE: $VOLUME_SIZE"
+	export VOLUME_SIZE
 	
 	h_msg 12 "Global var BACKUP_TYPE: $BACKUP_TYPE"
-	export BACKUP_TYPE
+	export BACKUP_TYPE	
 }
 
 # Get the script to be executed in the proper order
@@ -828,5 +831,3 @@ case "$1" in
 		fi
 		;;
 esac
-
-

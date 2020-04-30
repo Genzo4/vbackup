@@ -12,8 +12,11 @@
 # %D1%-%L% will become DATE-LEVEL (e.g. 120305-0)
 DESTDIR0=""
 
-# Compress backups? (yes/no)
-COMPRESS="yes"
+# Compress level: 0-9 (9 - max)
+COMPRESS_LEVEL=9
+
+# Size of one archive volume
+VOLUME_SIZE=10g
 
 # Backup type = INC (Incremental) or DIF (Differencial). Default: DIF
 # If backup level = 0 forcing FULL backup

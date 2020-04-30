@@ -232,8 +232,11 @@ read_global_conf()
 
 	# Export global variables
 	
-	h_msg 12 "Global var COMPRESS: $COMPRESS"
-	export COMPRESS
+	h_msg 12 "Global var COMPRESS_LEVEL: $COMPRESS_LEVEL"
+	export COMPRESS_LEVEL
+	
+	h_msg 12 "Global var VOLUME_SIZE: $VOLUME_SIZE"
+	export VOLUME_SIZE
 	
 	h_msg 12 "Global var BACKUP_TYPE: $BACKUP_TYPE"
 	export BACKUP_TYPE	
